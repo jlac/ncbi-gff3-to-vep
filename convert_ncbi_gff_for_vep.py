@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair common NCBI GFF3 transcript models and coordinate-sort for Ensembl VEP.
+"""Repair NCBI/VEuPathDB GFF3 transcript models and coordinate-sort for Ensembl VEP.
 
 Python >=3.8; no Python package dependencies. For .gz output requires bgzip;
 --index additionally requires tabix. Uses memory proportional to GFF feature count.
@@ -19,10 +19,11 @@ TRANSCRIPT_TYPES = {'mRNA', 'transcript', 'ncRNA', 'lnc_RNA', 'lncRNA',
                     'rRNA', 'tRNA', 'snRNA', 'snoRNA', 'miRNA', 'scRNA',
                     'antisense_RNA', 'pseudogenic_transcript', 'primary_transcript',
                     'SRP_RNA', 'RNase_P_RNA', 'RNase_MRP_RNA', 'tmRNA'}
-KEEP_TYPES = TRANSCRIPT_TYPES | {'gene', 'pseudogene', 'CDS', 'exon',
+GENE_TYPES = {'gene', 'protein_coding_gene', 'ncRNA_gene', 'pseudogene'}
+KEEP_TYPES = TRANSCRIPT_TYPES | GENE_TYPES | {'CDS', 'exon',
                                  'five_prime_UTR', 'three_prime_UTR', 'start_codon',
                                  'stop_codon'}
-RANK = {'gene': 0, 'pseudogene': 0, **{x: 1 for x in TRANSCRIPT_TYPES},
+RANK = {**{x: 0 for x in GENE_TYPES}, **{x: 1 for x in TRANSCRIPT_TYPES},
         'exon': 2, 'five_prime_UTR': 3, 'three_prime_UTR': 3,
         'start_codon': 4, 'CDS': 4, 'stop_codon': 4}
 
@@ -131,6 +132,7 @@ def convert(features, warnings, skip_pseudogenes=False):
     added = []
 
     # NCBI bacterial GFF commonly gives CDS Parent=gene directly, with no mRNA.
+    # PlasmoDB protein_coding_gene is also recognized as a gene feature.
     # One synthetic transcript per parent gene covers its directly attached CDSs.
     gene_cdss = collections.defaultdict(list)
     for f in features:
@@ -138,7 +140,7 @@ def convert(features, warnings, skip_pseudogenes=False):
             continue
         for parent in parents(f):
             p = by_id.get(parent)
-            if p and p.type in {'gene', 'pseudogene'}:
+            if p and p.type in GENE_TYPES:
                 gene_cdss[parent].append(f)
 
     for gene_id, cdss in gene_cdss.items():
@@ -153,7 +155,8 @@ def convert(features, warnings, skip_pseudogenes=False):
         # Use CDS bounds for the synthetic coding transcript, not necessarily the
         # whole gene span (which may include promoter regions).
         attrs = {'ID': tr_id, 'Parent': gene_id}
-        for tag in ('Name', 'gene', 'gene_name', 'product', 'locus_tag', 'Dbxref'):
+        for tag in ('Name', 'gene', 'gene_name', 'product', 'locus_tag', 'Dbxref',
+                    'ebi_biotype', 'biotype', 'gene_biotype'):
             if gene.attrs.get(tag):
                 attrs[tag] = gene.attrs[tag]
         if gene.attrs.get('pseudo') == 'true' or gene.type == 'pseudogene':
@@ -254,7 +257,7 @@ def write_output(features, output, index):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('input', help='NCBI GFF3 or GFF3.gz input')
+    ap.add_argument('input', help='NCBI/VEuPathDB GFF3 or GFF3.gz input')
     ap.add_argument('output', help='sorted .gff3 or BGZF-compressed .gff3.gz output')
     ap.add_argument('--index', action='store_true', help='create .tbi index (requires .gz output and tabix)')
     ap.add_argument('--keep-other', action='store_true', help='retain other feature types (e.g. region, match)')
